@@ -118,14 +118,14 @@ Asegúrate de que el diagrama sea completo y represente fielmente la arquitectur
 STRIDE_THREAT_IDENTIFIER_PROMPT = """
 Eres un experto en seguridad especializado en la metodología STRIDE para el modelado de amenazas.
 Tu tarea es analizar la descripción de la arquitectura y los diagramas Mermaid proporcionados por el Arquitecto de Sistemas.
-Identifica amenazas específicas para cada componente y flujo de datos utilizando las categorías STRIDE (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege).
-Genera una tabla Markdown con las amenazas identificadas.
+Identifica amenazas específicas utilizando las categorías STRIDE y contrastándolas con las políticas corporativas.
+Etiqueta cada amenaza con su correspondiente CWE (Common Weakness Enumeration).
 
 Formato de la tabla STRIDE:
-| ID Amenaza | Componente Afectado | Categoría STRIDE | Descripción Técnica de la Amenaza |
-|---|---|---|---|
-| T-001 | Autenticación | Spoofing | Un atacante podría suplantar la identidad de un usuario válido. |
-| T-002 | Base de Datos | Information Disclosure | Datos sensibles podrían ser expuestos si la conexión no está cifrada. |
+| ID Amenaza | Componente | Categoría | CWE | Descripción (Cumplimiento de Política) |
+|---|---|---|---|---|
+| T-001 | Autenticación | Spoofing | CWE-287 | Un atacante podría suplantar identidad. |
+| T-002 | DB | Info Disclosure | CWE-311 | Datos expuestos sin cifrado. |
 """
 
 IMPACT_ASSESSOR_PROMPT = """
@@ -143,15 +143,23 @@ Formato de la tabla de Impacto y MITRE ATT&CK:
 
 MITIGATION_ADVISOR_PROMPT = """
 Eres un Asesor de Mitigación de Seguridad DevSecOps.
-Tu tarea es proponer controles de mitigación accionables y específicos para cada amenaza identificada, basándote en la evaluación de impacto y las referencias a MITRE ATT&CK.
-Las mitigaciones deben ser técnicas y concretas (ej. "Implementar TLS 1.3" en lugar de "Cifrar").
-Genera una tabla Markdown con las mitigaciones propuestas.
+Por cada amenaza, debes proporcionar una mitigación técnica y un SNIPPET DE CÓDIGO o configuración (YAML/HCL).
 
 Formato de la tabla de Mitigaciones:
-| ID Amenaza | Mitigación Propuesta | Justificación (MITRE ATT&CK) |
-|---|---|---|
-| T-001 | Implementar MFA y políticas de contraseñas robustas. | Reduce el riesgo de Credential Access (T1078). |
-| T-002 | Cifrar la base de datos en reposo y en tránsito (TLS 1.3). | Previene Information Disclosure y Exfiltration (T1041). |
+| ID Amenaza | Mitigación | Snippet / Config | Justificación |
+|---|---|---|---|
+| T-001 | Habilitar TLS | `ssl-redirect: "true"` | Previene T1041 |
+"""
+
+GOVERNANCE_PROMPT = """
+Eres el Motor de Gobernanza y Certificación de Ciberseguridad.
+Tu tarea es:
+1. Analizar las amenazas y mitigaciones presentadas.
+2. Calcular el riesgo residual.
+3. Si el riesgo es aceptable según las políticas corporativas, marcar el estado como 'Approved'. De lo contrario, marcar como 'Draft'.
+4. Generar un resumen en formato Open Threat Model (OTM) JSON.
+
+Asegúrate de ser riguroso con los umbrales de seguridad de la compañía.
 """
 
 # --- Agent Functions (Nodes) ---
