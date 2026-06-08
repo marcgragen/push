@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
+from typing import Literal
 
 try:
     # Attempting official import of the new package
@@ -177,9 +178,14 @@ def initial_scanner_node(state: AgentState) -> AgentState:
     query = state.get("query", "")
     messages = state.get("messages", [])
 
+    # Check for manual deep scan triggers in user query
+    deep_scan_triggers = ["deep scan", "thorough", "detailed analysis", "comprehensive", "in-depth", "full scan", "complete analysis"]
+    manual_deep_scan = any(trigger.lower() in query.lower() for trigger in deep_scan_triggers)
+
     prompt = (
         "You are a fast local scanner. Provide a concise summary of the provided input "
         "with discovered components, endpoints, exposed ports, and any obvious misconfigurations. "
+        "Consider complexity: insufficient information, vague descriptions, or incomplete data should indicate need for deeper analysis. "
         "Return a short human-readable summary and END with a line 'NEEDS_DEEP_SCAN: yes' or 'NEEDS_DEEP_SCAN: no'.\n\n"
         f"Input to scan:\n{query}\n"
     )
@@ -195,6 +201,11 @@ def initial_scanner_node(state: AgentState) -> AgentState:
         if line.upper().startswith("NEEDS_DEEP_SCAN:"):
             needs_deep = "yes" in line.lower()
             break
+    
+    # Override with manual deep scan request
+    if manual_deep_scan:
+        needs_deep = True
+        print("    [INFO] User requested deep scan via query keywords.")
 
     return {
         "scan_summary": scan_output,
@@ -228,6 +239,25 @@ def deep_analyzer_node(state: AgentState) -> AgentState:
         "messages": messages + [AIMessage(content=deep_output)]
     }
 
+def user_input_collection_node(state: AgentState) -> AgentState:
+    """Node that prompts user for additional information when requested by the architect."""
+    print("\n--- Agent: Waiting for User Input ---")
+    user_request_text = state.get("user_request_text", "")
+    
+    print(f"\nAgent needs additional information:\n{user_request_text}")
+    user_add = input("\nYou (provide requested info): ")
+    
+    # Append user input to messages and raw_infra_data for continuity
+    messages = state.get("messages", [])
+    raw_infra = state.get("raw_infra_data", "")
+    
+    return {
+        "requires_user_input": False,
+        "user_request_text": "",
+        "messages": messages + [HumanMessage(content=user_add)],
+        "raw_infra_data": (raw_infra or "") + "\n[USER PROVIDED ADDITIONAL INFO]\n" + user_add
+    }
+
 # --- Agent Functions (Nodes) ---
 
 def system_architect_node(state: AgentState) -> AgentState:
@@ -235,19 +265,6 @@ def system_architect_node(state: AgentState) -> AgentState:
     query = state.get("query", "")
     messages = state.get("messages", [])
     messages.append(HumanMessage(content=f"Usuario: {query}"))
-
-    # If the initial scanner indicated a need for deep analysis, ensure we run it and merge results
-    if state.get("needs_deep_scan") and not state.get("deep_scan_results"):
-        print("    [INFO] Deep scan requested by initial scanner. Running deep analyzer...")
-        deep_state_updates = deep_analyzer_node(state)
-        # Merge deep analyzer outputs into our state variables for downstream use
-        state.update({
-            "deep_scan_results": deep_state_updates.get("deep_scan_results", ""),
-            "raw_infra_data": deep_state_updates.get("raw_infra_data", state.get("raw_infra_data", "")),
-            "messages": messages + deep_state_updates.get("messages", [])
-        })
-        # Refresh local references
-        messages = state.get("messages", messages)
     
     # Simulación de carga de políticas corporativas
     policies = "Every DB must be in an isolated subnet. 2. Mandatory use of WAF for external traffic."
@@ -283,7 +300,11 @@ def system_architect_node(state: AgentState) -> AgentState:
         "I need",
         "Could you provide",
         "Can you provide",
-        "Please supply"
+        "Please supply",
+        "need more information",
+        "additional information",
+        "more details",
+        "clarification"
     ]
 
     requires_input = False
@@ -437,9 +458,30 @@ def final_report_node(state: AgentState) -> AgentState:
     return {"messages": state["messages"] + [AIMessage(content=final_report_content)]}
 
 # --- Build the Graph ---
+def route_after_scan(state: AgentState) -> Literal["deep_analyzer", "system_architect"]:
+    """Route to deep analyzer if needed, otherwise go to system architect."""
+    if state.get("needs_deep_scan"):
+        print("    [ROUTING] Deep scan needed - routing to deep_analyzer...")
+        return "deep_analyzer"
+    return "system_architect"
+
+def route_after_architect(state: AgentState) -> Literal["user_input_collection", "stride_threat_identifier"]:
+    """Route to user input collection if more information is needed."""
+    if state.get("requires_user_input"):
+        print("    [ROUTING] User input required - routing to user_input_collection...")
+        return "user_input_collection"
+    return "stride_threat_identifier"
+
+def route_after_user_input(state: AgentState) -> Literal["system_architect"]:
+    """After collecting user input, go back to system architect for re-analysis."""
+    print("    [ROUTING] User input collected - returning to system_architect for re-analysis...")
+    return "system_architect"
+
 workflow = StateGraph(AgentState)
 # Añadir nodos para cada agente
 workflow.add_node("initial_scanner", initial_scanner_node)
+workflow.add_node("deep_analyzer", deep_analyzer_node)
+workflow.add_node("user_input_collection", user_input_collection_node)
 workflow.add_node("system_architect", system_architect_node)
 workflow.add_node("stride_threat_identifier", stride_threat_identifier_node)
 workflow.add_node("impact_assessor", impact_assessor_node)
@@ -447,10 +489,32 @@ workflow.add_node("mitigation_advisor", mitigation_advisor_node)
 workflow.add_node("governance_node", governance_node)
 workflow.add_node("final_report", final_report_node)
 
-# Definir la secuencia de ejecución
+# Definir la secuencia de ejecución con conditional edges
 workflow.set_entry_point("initial_scanner")
-workflow.add_edge("initial_scanner", "system_architect")
-workflow.add_edge("system_architect", "stride_threat_identifier")
+workflow.add_conditional_edges(
+    "initial_scanner",
+    route_after_scan,
+    {
+        "deep_analyzer": "deep_analyzer",
+        "system_architect": "system_architect"
+    }
+)
+workflow.add_edge("deep_analyzer", "system_architect")
+workflow.add_conditional_edges(
+    "system_architect",
+    route_after_architect,
+    {
+        "user_input_collection": "user_input_collection",
+        "stride_threat_identifier": "stride_threat_identifier"
+    }
+)
+workflow.add_conditional_edges(
+    "user_input_collection",
+    route_after_user_input,
+    {
+        "system_architect": "system_architect"
+    }
+)
 workflow.add_edge("stride_threat_identifier", "impact_assessor")
 workflow.add_edge("impact_assessor", "mitigation_advisor")
 workflow.add_edge("mitigation_advisor", "governance_node")
@@ -468,6 +532,7 @@ config = {"configurable": {"thread_id": "threat_modeling_session_01"}}
 
 print("\n--- Security Architect Agent (Threat Modeling) Initiated ---")
 print("Introduce the name of an application or describe an architecture to begin.")
+print("Tip: Add 'deep scan' to your query to request a thorough analysis.\n")
 
 while True:
     pregunta = input("\nTú: ")
@@ -488,34 +553,16 @@ while True:
             "needs_deep_scan": False,
             "deep_scan_results": "",
             "requires_user_input": False,
-            "user_request_text": ""
+            "user_request_text": "",
+            "architecture_description": "",
+            "threats_stride": "",
+            "impact_assessment": "",
+            "mitigations": "",
+            "otm_report": "",
+            "status": "Draft"
         },
         config=config
     )
-
-    # If any node requested more user input, pause and collect it, then re-invoke
-    if resultado.get("requires_user_input"):
-        prompt_text = resultado.get("user_request_text") or resultado["messages"][-1].content
-        print("\nAgent requests additional information to continue:\n")
-        print(prompt_text)
-        user_add = input("You (provide requested info): ")
-
-        # Build an updated state incorporating the user's reply
-        updated_state = {
-            "query": pregunta,
-            "messages": resultado.get("messages", []) + [HumanMessage(content=user_add)],
-            "mermaid_diagrams": resultado.get("mermaid_diagrams", []),
-            "mitre_attack_references": resultado.get("mitre_attack_references", []),
-            "raw_infra_data": (resultado.get("raw_infra_data") or "") + "\n" + user_add,
-            "corporate_policies": resultado.get("corporate_policies", ""),
-            "scan_summary": resultado.get("scan_summary", ""),
-            "needs_deep_scan": resultado.get("needs_deep_scan", False),
-            "deep_scan_results": resultado.get("deep_scan_results", ""),
-            "requires_user_input": False,
-            "user_request_text": ""
-        }
-
-        resultado = app.invoke(updated_state, config=config)
 
     # El nodo final_report_node añade el reporte completo a los mensajes.
     # Imprimimos el contenido del último mensaje, que es el reporte final.
