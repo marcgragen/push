@@ -6,8 +6,8 @@ load_dotenv()
 
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
-print("Buscando modelos compatibles con generación de contenido...")
+print("Searching for models compatible with content generation...")
 for model in client.models.list():
-    # Usamos supported_actions como sugirió el error
+    # We use supported_actions as suggested by the error
     if "generateContent" in model.supported_actions:
         print(f"- {model.name}")

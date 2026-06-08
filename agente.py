@@ -10,54 +10,54 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
 
 try:
-    # Intentamos la importación oficial del nuevo paquete
+    # Attempting official import of the new package
     from langchain_tavily import TavilySearchResults
-    from langchain_core.runnables import RunnableConfig # Necesario para Tavily
+    from langchain_core.runnables import RunnableConfig # Required for Tavily
 except ImportError:
-    # Fallback de seguridad si el paquete de integración falla en Python 3.14
-    print("[SISTEMA] Aviso: Usando fallback de búsqueda debido a incompatibilidad de entorno.")
+    # Safety fallback if the integration package fails in Python 3.14
+    print("[SYSTEM] Notice: Using search fallback due to environment incompatibility.")
     from langchain_community.tools.tavily_search import TavilySearchResults
-    from langchain_core.runnables import RunnableConfig # Necesario para Tavily
+    from langchain_core.runnables import RunnableConfig # Required for Tavily
 
-# 1. Cargar variables de entorno ocultas
+# 1. Load hidden environment variables
 load_dotenv()
 
-print("[SISTEMA] Configurando modelos con tolerancia a fallos de cuota...")
+print("[SYSTEM] Configuring models with quota failover support...")
 
-llm_principal = ChatGoogleGenerativeAI(
+llm_primary = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash", 
     google_api_key=os.getenv("GOOGLE_API_KEY"),
     temperature=0
 )
 
-llm_respaldo = ChatGoogleGenerativeAI(
+llm_fallback = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash-8b", 
     google_api_key=os.getenv("GOOGLE_API_KEY"),
     temperature=0
 )
 
-llm_ollama = ChatOllama(
-    model="llama3.2",  # Modelo recomendado para rendimiento/velocidad en M4
+llm_local = ChatOllama(
+    model="llama3.2",  # Recommended model for performance/speed on M4
     temperature=0
 )
 
-# Acoplamos el fallback: Primero intenta Gemini Flash, luego Gemini Flash-8b, 
-# y finalmente recurre al modelo local en tu Mac Mini M4.
-llm = llm_principal.with_fallbacks([llm_respaldo, llm_ollama])
+# We couple the fallback: First try Gemini Flash, then Gemini Flash-8b, 
+# and finally resort to the local model on your Mac Mini M4.
+llm = llm_primary.with_fallbacks([llm_fallback, llm_local])
 
 # --- AgentState Definition ---
 class AgentState(TypedDict):
     """
-    Representa el estado compartido entre los agentes en el grafo.
+    Represents the shared state among agents in the graph.
     """
     query: str
-    raw_infra_data: str  # Ingesta de IaC (K8s, Terraform), OpenAPI o Scans
-    corporate_policies: str  # Políticas internas y reglas de cumplimiento
+    raw_infra_data: str  # Ingestion of IaC (K8s, Terraform), OpenAPI or Scans
+    corporate_policies: str  # Internal policies and compliance rules
     architecture_description: str
     threats_stride: str
     impact_assessment: str
     mitigations: str
-    otm_report: str  # Reporte en formato Open Threat Model (JSON)
+    otm_report: str  # Report in Open Threat Model (JSON) format
     status: str  # Draft -> In Review -> Approved
     mermaid_diagrams: Annotated[List[str], operator.add]
     mitre_attack_references: Annotated[List[str], operator.add]
@@ -67,48 +67,48 @@ class AgentState(TypedDict):
 tavily_tool = None
 if os.getenv("TAVILY_API_KEY"):
     tavily_tool = TavilySearchResults(max_results=3)
-else:
-    # Evita que el agente falle al iniciar si falta la clave, simplemente deshabilita la búsqueda
-    print("[ADVERTENCIA] TAVILY_API_KEY no configurada. El agente no tendrá acceso a internet.")
+else: # Prevents the agent from failing at startup if the key is missing, simply disables search
+    print("[WARNING] TAVILY_API_KEY not configured. The agent will not have internet access.") 
+
 
 # --- Agent Prompts ---
 SYSTEM_ARCHITECT_PROMPT = """
-Eres un Arquitecto de Sistemas experto en Ingesta "Zero-Friction". Tu tarea es parsear infraestructura y código.
-Capacidades de Ingesta:
-1. IaC: Analiza manifiestos K8s, RBAC, Dockerfiles y Terraform. Identifica componentes y redes.
-2. APIs: Lee archivos Swagger/OpenAPI para extraer endpoints y métodos de auth.
-3. Scanners: Integra resultados de Trivy/Kubiscan si se proporcionan.
+You are a System Architect expert in "Zero-Friction" Ingestion. Your task is to parse infrastructure and code.
+Ingestion Capabilities:
+1. IaC: Analyze K8s manifests, RBAC, Dockerfiles, and Terraform. Identify components and networks. 
+2. APIs: Read Swagger/OpenAPI files to extract endpoints and authentication methods.
+3. Scanners: Integrate results from Trivy/Kubiscan if provided.
 
-Si la información es insuficiente, solicita más detalles.
-Tu objetivo es generar una descripción detallada de la arquitectura y, lo más importante, un diagrama Mermaid.js de tipo 'flowchart TD' que represente las fronteras de confianza (usando 'subgraph') y los flujos de datos (etiquetando los protocolos).
+If the information is insufficient, request more details.
+Your goal is to generate a detailed description of the architecture and, most importantly, a Mermaid.js diagram of type 'flowchart TD' representing trust boundaries (using 'subgraph') and data flows (labeling protocols).
 
-CAPACIDADES DE DIAGRAMACIÓN (MERMAID.JS):
-1. Fronteras de Confianza: Usa 'subgraph' para aislar visualmente componentes por nivel de red (Internet, DMZ, Red Interna, DB).
-2. DFD Dinámicos (flowchart TD/LR): Etiqueta flechas con protocolos (|HTTPS/REST|, |SQL via TLS 1.2|). Identifica flujos inseguros.
-3. Secuencias de Autenticación (sequenceDiagram): Para flujos de Login, OAuth o OIDC, mostrando el intercambio de JWT/Tokens entre Usuario, App e IdP.
-4. Políticas RBAC y K8s: Visualiza relaciones entre ServiceAccount, RoleBinding y Pods a partir de descripciones de infraestructura.
-5. Ciclos de Vida de Datos (stateDiagram-v2): Mapea el estado de sensibilidad del dato (Público -> Confidencial -> Cifrado).
+DIAGRAMMING CAPABILITIES (MERMAID.JS):
+1. Trust Boundaries: Use 'subgraph' to visually isolate components by network level (Internet, DMZ, Internal Network, DB). 
+2. Dynamic DFDs (flowchart TD/LR): Label arrows with protocols (|HTTPS/REST|, |SQL via TLS 1.2|). Identify insecure flows. 
+3. Authentication Sequences (sequenceDiagram): For Login, OAuth, or OIDC flows, showing JWT/Token exchange between User, App, and IdP. 
+4. RBAC and K8s Policies: Visualize relationships between ServiceAccount, RoleBinding, and Pods from infrastructure descriptions. 
+5. Data Life Cycles (stateDiagram-v2): Map data sensitivity states (Public -> Confidential -> Encrypted). 
 
-REGLAS DE SINTAXIS:
-- Usa `flowchart TD` para arquitecturas generales.
-- Componentes: `[ ]` para procesos/apps, `[( )]` para DBs, `(( ))` para usuarios/entidades externas.
-- Todos los diagramas deben entregarse en bloques de código markdown para su renderización automática.
+SYNTAX RULES:
+- Use `flowchart TD` for general architectures. 
+- Components: `[ ]` for processes/apps, `[( )]` for DBs, `(( ))` for external entities or users. 
+- All diagrams must be delivered in markdown code blocks for automatic rendering. 
 
-Ejemplo de salida Mermaid:
+Mermaid output example:
 ```mermaid
 flowchart TD
-    Cliente((Usuario Externo))
+    Client((External User))
 
-    subgraph DMZ Corporativa
+    subgraph Corporate DMZ
         WAF[Web Application Firewall]
-        App[Aplicación Interna]
+        App[Internal Application]
     end
 
-    subgraph Red Interna Segura
+    subgraph Secure Internal Network
         DB[(PostgreSQL)]
     end
 
-    Cliente --o|HTTPS| WAF
+    Client --o|HTTPS| WAF
     WAF --o|Proxy| App
     App --o|TCP 5432| DB
 ```
@@ -116,75 +116,75 @@ Asegúrate de que el diagrama sea completo y represente fielmente la arquitectur
 """
 
 STRIDE_THREAT_IDENTIFIER_PROMPT = """
-Eres un experto en seguridad especializado en la metodología STRIDE para el modelado de amenazas.
-Tu tarea es analizar la descripción de la arquitectura y los diagramas Mermaid proporcionados por el Arquitecto de Sistemas.
-Identifica amenazas específicas utilizando las categorías STRIDE y contrastándolas con las políticas corporativas.
-Etiqueta cada amenaza con su correspondiente CWE (Common Weakness Enumeration).
+You are a security expert specialized in the STRIDE methodology for threat modeling.
+Your task is to analyze the architecture description and Mermaid diagrams provided by the System Architect.
+Identify specific threats using STRIDE categories and contrasting them with corporate policies.
+Label each threat with its corresponding CWE (Common Weakness Enumeration).
 
-Formato de la tabla STRIDE:
-| ID Amenaza | Componente | Categoría | CWE | Descripción (Cumplimiento de Política) |
+STRIDE table format:
+| Threat ID | Component | Category | CWE | Description (Policy Compliance) |
 |---|---|---|---|---|
-| T-001 | Autenticación | Spoofing | CWE-287 | Un atacante podría suplantar identidad. |
-| T-002 | DB | Info Disclosure | CWE-311 | Datos expuestos sin cifrado. |
+| T-001 | Authentication | Spoofing | CWE-287 | An attacker could impersonate identity. |
+| T-002 | DB | Info Disclosure | CWE-311 | Data exposed without encryption. |
 """
 
 IMPACT_ASSESSOR_PROMPT = """
-Eres un Analista de Riesgos de Seguridad con experiencia en MITRE ATT&CK.
-Tu tarea es evaluar el impacto potencial de cada amenaza STRIDE identificada, asignando un nivel de riesgo (Alto, Medio, Bajo).
-Además, para cada amenaza, identifica y referencia las tácticas y técnicas relevantes de MITRE ATT&CK.
-Genera una tabla Markdown que combine la información de STRIDE con la evaluación de impacto y las referencias a MITRE ATT&CK.
+You are a Security Risk Analyst with experience in MITRE ATT&CK.
+Your task is to assess the potential impact of each identified STRIDE threat, assigning a risk level (High, Medium, Low).
+Additionally, for each threat, identify and reference relevant MITRE ATT&CK tactics and techniques.
+Generate a Markdown table that combines the STRIDE information with the impact assessment and MITRE ATT&CK references.
 
-Formato de la tabla de Impacto y MITRE ATT&CK:
-| ID Amenaza | Nivel de Riesgo | Impacto Potencial | Tácticas MITRE ATT&CK | Técnicas MITRE ATT&CK |
+Impact and MITRE ATT&CK table format:
+| Threat ID | Risk Level | Potential Impact | MITRE ATT&CK Tactics | MITRE ATT&CK Techniques |
 |---|---|---|---|---|
-| T-001 | Alto | Acceso no autorizado, pérdida de datos. | Credential Access, Persistence | T1078 (Valid Accounts), T1098 (Account Manipulation) |
-| T-002 | Medio | Fuga de información sensible, multas regulatorias. | Exfiltration, Collection | T1041 (Exfiltration Over C2 Channel), T1005 (Data from Local System) |
+| T-001 | High | Unauthorized access, data loss. | Credential Access, Persistence | T1078 (Valid Accounts), T1098 (Account Manipulation) |
+| T-002 | Medium | Sensitive information leakage, regulatory fines. | Exfiltration, Collection | T1041 (Exfiltration Over C2 Channel), T1005 (Data from Local System) |
 """
 
 MITIGATION_ADVISOR_PROMPT = """
-Eres un Asesor de Mitigación de Seguridad DevSecOps.
-Por cada amenaza, debes proporcionar una mitigación técnica y un SNIPPET DE CÓDIGO o configuración (YAML/HCL).
+You are a DevSecOps Security Mitigation Advisor.
+For each threat, you must provide a technical mitigation and a CODE SNIPPET or configuration (YAML/HCL).
 
-Formato de la tabla de Mitigaciones:
-| ID Amenaza | Mitigación | Snippet / Config | Justificación |
+Mitigation table format:
+| Threat ID | Mitigation | Snippet / Config | Justification |
 |---|---|---|---|
-| T-001 | Habilitar TLS | `ssl-redirect: "true"` | Previene T1041 |
+| T-001 | Enable TLS | `ssl-redirect: "true"` | Prevents T1041 |
 """
 
 GOVERNANCE_PROMPT = """
-Eres el Motor de Gobernanza y Certificación de Ciberseguridad.
-Tu tarea es:
-1. Analizar las amenazas y mitigaciones presentadas.
-2. Calcular el riesgo residual.
-3. Si el riesgo es aceptable según las políticas corporativas, marcar el estado como 'Approved'. De lo contrario, marcar como 'Draft'.
-4. Generar un resumen en formato Open Threat Model (OTM) JSON.
+You are the Cybersecurity Governance and Certification Engine.
+Your task is:
+1. Analyze the presented threats and mitigations.
+2. Calculate the residual risk.
+3. If the risk is acceptable according to corporate policies, mark the status as 'Approved'. Otherwise, mark as 'Draft'.
+4. Generate a summary in Open Threat Model (OTM) JSON format.
 
-Asegúrate de ser riguroso con los umbrales de seguridad de la compañía.
+Ensure you are rigorous with the company's security thresholds.
 """
 
 # --- Agent Functions (Nodes) ---
 
 def system_architect_node(state: AgentState) -> AgentState:
-    print("\n--- Agente: Arquitecto de Sistemas ---")
+    print("\n--- Agent: Systems Architect ---")
     query = state["query"]
     messages = state["messages"]
     messages.append(HumanMessage(content=f"Usuario: {query}"))
     
     # Simulación de carga de políticas corporativas
-    policies = "1. Toda DB debe estar en subred aislada. 2. Uso obligatorio de WAF para tráfico externo."
+    policies = "Every DB must be in an isolated subnet. 2. Mandatory use of WAF for external traffic."
 
-    architect_prompt_content = SYSTEM_ARCHITECT_PROMPT + f"\n\nLa aplicación/sistema a analizar es: {query}"
+    architect_prompt_content = SYSTEM_ARCHITECT_PROMPT + f"\n\nThe application/system to be analyzed is: {query}"
     
     search_results_str = ""
     if tavily_tool and any(x in query.lower() for x in ["buscar", "arquitectura", "swagger", "manifest"]):
-        print("    [INFO] Usando Tavily para buscar información de la arquitectura.")
+        print("    [INFO] Using Tavily to search for architecture information.")
         try:
             # TavilySearchResults.invoke espera un dict con 'query'
-            search_results = tavily_tool.invoke({"query": f"arquitectura técnica de {query}"})
-            search_results_str = f"\n\nResultados de búsqueda relevantes:\n{search_results}"
+            search_results = tavily_tool.invoke({"query": f"technical architecture of {query}"})
+            search_results_str = f"\n\nRelevant search results:\n{search_results}"
         except Exception as e:
-            print(f"    [ADVERTENCIA] Error al usar Tavily: {e}. Continuando sin resultados de búsqueda.")
-            search_results_str = "\n\n[ADVERTENCIA] La búsqueda externa falló."
+            print(f"    [WARNING] Error using Tavily: {e}. Continuing with no search results.")
+            search_results_str = "\n\n[WARNING] The external search failed."
 
     final_architect_prompt = architect_prompt_content + search_results_str
     
@@ -221,16 +221,16 @@ def system_architect_node(state: AgentState) -> AgentState:
     }
 
 def stride_threat_identifier_node(state: AgentState) -> AgentState:
-    print("\n--- Agente: Identificador de Amenazas STRIDE ---")
+    print("\n--- Agent: STRIDE Threat Identifier ---")
     architecture_desc = state["architecture_description"]
     mermaid_diagrams = "\n".join(state["mermaid_diagrams"])
     policies = state["corporate_policies"]
     messages = state["messages"]
 
     stride_prompt = STRIDE_THREAT_IDENTIFIER_PROMPT + \
-                    f"\n\nDescripción de la Arquitectura:\n{architecture_desc}" + \
-                    f"\n\nDiagramas Mermaid:\n{mermaid_diagrams}" + \
-                    f"\n\nPolíticas Corporativas:\n{policies}"
+                    f"\n\nArchitecture Description:\n{architecture_desc}" + \
+                    f"\n\n Mermaid Diagrams:\n{mermaid_diagrams}" + \
+                    f"\n\nCorporate Policies:\n{policies}"
 
     response_message = llm.invoke([HumanMessage(content=stride_prompt)])
     stride_output = response_message.content
@@ -241,14 +241,14 @@ def stride_threat_identifier_node(state: AgentState) -> AgentState:
     }
 
 def impact_assessor_node(state: AgentState) -> AgentState:
-    print("\n--- Agente: Evaluador de Impacto ---")
+    print("\n--- Agent: Impact Assessor ---")
     threats_stride = state["threats_stride"]
     architecture_desc = state["architecture_description"] # Contexto para el impacto
     messages = state["messages"]
 
     impact_prompt = IMPACT_ASSESSOR_PROMPT + \
-                    f"\n\nArquitectura:\n{architecture_desc}" + \
-                    f"\n\nAmenazas STRIDE identificadas:\n{threats_stride}"
+                    f"\n\nArchitecture:\n{architecture_desc}" + \
+                    f"\n\nIdentified STRIDE Threats:\n{threats_stride}"
 
     response_message = llm.invoke([HumanMessage(content=impact_prompt)])
     impact_output = response_message.content
@@ -266,14 +266,14 @@ def impact_assessor_node(state: AgentState) -> AgentState:
     }
 
 def mitigation_advisor_node(state: AgentState) -> AgentState:
-    print("\n--- Agente: Asesor de Mitigación ---")
+    print("\n--- Agent: Mitigation Advisor ---")
     threats_stride = state["threats_stride"]
     impact_assessment = state["impact_assessment"]
     messages = state["messages"]
 
     mitigation_prompt = MITIGATION_ADVISOR_PROMPT + \
-                        f"\n\nAmenazas STRIDE:\n{threats_stride}" + \
-                        f"\n\nEvaluación de Impacto y MITRE ATT&CK:\n{impact_assessment}"
+                        f"\n\nSTRIDE Threats:\n{threats_stride}" + \
+                        f"\n\nImpact Assessment and MITRE ATT&CK:\n{impact_assessment}"
 
     response_message = llm.invoke([HumanMessage(content=mitigation_prompt)])
     mitigation_output = response_message.content
@@ -284,10 +284,10 @@ def mitigation_advisor_node(state: AgentState) -> AgentState:
     }
 
 def governance_node(state: AgentState) -> AgentState:
-    print("\n--- Agente: Gobernanza y Escala ---")
+    print("\n--- Agent: Governance and Scaling ---")
     messages = state["messages"]
     
-    gov_prompt = GOVERNANCE_PROMPT + f"\n\nContexto: {state['threats_stride']} \n {state['mitigations']}"
+    gov_prompt = GOVERNANCE_PROMPT + f"\n\nContext: {state['threats_stride']} \n {state['mitigations']}"
     response = llm.invoke([HumanMessage(content=gov_prompt)])
     
     # Simulamos la asignación de estado basada en la lógica del LLM
@@ -349,13 +349,13 @@ app = workflow.compile(checkpointer=memoria)
 # --- Configuración y Bucle Principal ---
 config = {"configurable": {"thread_id": "threat_modeling_session_01"}}
 
-print("\n--- Agente Arquitecto de Seguridad (Threat Modeling) Iniciado ---")
-print("Introduce el nombre de una aplicación o describe una arquitectura para comenzar.")
+print("\n--- Security Architect Agent (Threat Modeling) Initiated ---")
+print("Introduce the name of an application or describe an architecture to begin.")
 
 while True:
     pregunta = input("\nTú: ")
     if pregunta.lower() in ['salir', 'exit', 'quit']:
-        print("Guardando bicicleta y apagando agente...")
+        print("Turning off the agent...")
         break
 
     # Invocar el grafo con el estado inicial
@@ -374,4 +374,4 @@ while True:
     # El nodo final_report_node añade el reporte completo a los mensajes.
     # Imprimimos el contenido del último mensaje, que es el reporte final.
     final_report_message = resultado['messages'][-1].content
-    print(f"\nAgente: {final_report_message}")
+    print(f"\nAgent: {final_report_message}")
