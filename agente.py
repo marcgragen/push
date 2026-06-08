@@ -1,52 +1,83 @@
-import pandas as pd
 import os
+from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
-from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_google_genai import ChatGoogleGenerativeAI
+try:
+    # Intentamos la importación oficial del nuevo paquete
+    from langchain_tavily import TavilySearchResults
+except ImportError:
+    # Fallback de seguridad si el paquete de integración falla en Python 3.14
+    print("[SISTEMA] Aviso: Usando fallback de búsqueda debido a incompatibilidad de entorno.")
+    from langchain_community.tools.tavily_search import TavilySearchResults
 
-# 1. Conectar con el LLM local
-llm = ChatOllama(model="llama3.2", temperature=0)
+# 1. Cargar variables de entorno ocultas
+load_dotenv()
 
-# 2. Definir la herramienta REAL de Análisis de Telemetría
-@tool
-def analizar_archivo_entrenamiento(ruta_archivo: str) -> str:
-    """Usa esta herramienta EXCLUSIVAMENTE para leer un archivo CSV con datos de entrenamientos de Garmin/Strava."""
-    print(f"\n[SISTEMA: Analizando telemetría en {ruta_archivo}...]\n")
-    
-    if not os.path.exists(ruta_archivo):
-        return f"Error: No se pudo encontrar el archivo en la ruta {ruta_archivo}."
-    
-    try:
-        # Leemos el archivo CSV. 
-        df = pd.read_csv(ruta_archivo)
-        
-        # Generamos un resumen estadístico básico de los datos numéricos de la ruta
-        resumen_estadistico = df.describe().to_string()
-        
-        resultado = f"Lectura exitosa. Aquí tienes las estadísticas de la sesión:\n{resumen_estadistico}\n"
-        resultado += "Por favor, analiza estos datos e identifica picos de esfuerzo, carga de entrenamiento o sugiere tiempos de recuperación."
-        
-        return resultado
-    except Exception as e:
-        return f"Error crítico al procesar el archivo deportivo: {str(e)}"
+# 2. Definir el modelo principal y el de respaldo
+print("[SISTEMA] Configurando modelos con tolerancia a fallos de cuota...")
 
-herramientas = [analizar_archivo_entrenamiento]
+llm_principal = ChatGoogleGenerativeAI(
+    model="gemini-1.5-flash", 
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0
+)
 
-# 3. Inicializar la memoria (Checkpointer)
+llm_respaldo = ChatGoogleGenerativeAI(
+    model="gemini-1.5-flash-8b", 
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0
+)
+
+llm_ollama = ChatOllama(
+    model="llama3.2",  # Modelo recomendado para rendimiento/velocidad en M4
+    temperature=0
+)
+
+# Acoplamos el fallback: Primero intenta Gemini Flash, luego Gemini Flash-8b, 
+# y finalmente recurre al modelo local en tu Mac Mini M4.
+llm = llm_principal.with_fallbacks([llm_respaldo, llm_ollama])
+
+# 3. Definir herramientas: Búsqueda para investigar arquitecturas online
+if os.getenv("TAVILY_API_KEY"):
+    herramientas = [TavilySearchResults(max_results=3)]
+else:
+    # Evita que el agente falle al iniciar si falta la clave, simplemente deshabilita la búsqueda
+    print("[ADVERTENCIA] TAVILY_API_KEY no configurada. El agente no tendrá acceso a internet.")
+    herramientas = []
+
+# 4. Inicializar memoria
 memoria = MemorySaver()
 
-# 4. Crear las instrucciones base del sistema (System Prompt)
-instrucciones_sistema = """Eres un analista de rendimiento deportivo y entrenador personal de alto nivel, educado y analítico.
-REGLAS ESTRICTAS DE COMPORTAMIENTO:
-1. Especialízate en analizar métricas de ciclismo, running y senderismo.
-2. Al evaluar el ciclismo, enfócate en la relación entre vatios y el desnivel acumulado.
-3. Si el usuario te saluda o hace una pregunta general sobre deporte, responde amablemente.
-4. NO utilices tu herramienta de análisis a menos que el usuario te proporcione explícitamente la ruta de un archivo CSV en su ordenador.
-5. Tu objetivo es cruzar los datos aportados para detectar fatiga, mejoras de forma y sugerir entrenamientos."""
+# 5. Crear el System Prompt
+instrucciones_sistema = """Rol: Actúa como un Arquitecto de Seguridad DevSecOps experto en metodologías de Threat Modeling.
 
-# 5. Crear el agente pasándole la memoria Y el System Prompt
+TAREA: Generar un Reporte de Modelado de Amenazas formal y profesional utilizando Mermaid.js para la visualización técnica de la arquitectura.
+
+ACCIONES OBLIGATORIAS:
+1. INVESTIGACIÓN: Si el usuario da un nombre de aplicación, utiliza la herramienta de búsqueda para obtener información técnica sobre su arquitectura típica, stack y dependencias.
+2. CLARIFICACIÓN: Si la información no se encuentra o es insuficiente, solicita al usuario los detalles necesarios (componentes, flujos de datos, usuarios, entorno de despliegue).
+3. MODELADO (Reporte Final):
+   - Generar diagramas Mermaid.js siguiendo los estándares técnicos detallados abajo.
+   - Matriz STRIDE Tabular: Genera una tabla Markdown con ID de Amenaza, Componente Afectado, Categoría STRIDE, Descripción Técnica y Nivel de Riesgo (Alto/Medio/Bajo).
+   - Controles de Mitigación Accionables: Proporciona contramedidas técnicas específicas (ej. "Implementar TLS 1.3" en lugar de "Cifrar").
+
+CAPACIDADES DE DIAGRAMACIÓN (MERMAID.JS):
+1. Fronteras de Confianza: Usa 'subgraph' para aislar visualmente componentes por nivel de red (Internet, DMZ, Red Interna, DB).
+2. DFD Dinámicos (flowchart TD/LR): Etiqueta flechas con protocolos (|HTTPS/REST|, |SQL via TLS 1.2|). Identifica flujos inseguros.
+3. Secuencias de Autenticación (sequenceDiagram): Para flujos de Login, OAuth o OIDC, mostrando el intercambio de JWT/Tokens entre Usuario, App e IdP.
+4. Políticas RBAC y K8s: Visualiza relaciones entre ServiceAccount, RoleBinding y Pods a partir de descripciones de infraestructura.
+5. Ciclos de Vida de Datos (stateDiagram-v2): Mapea el estado de sensibilidad del dato (Público -> Confidencial -> Cifrado).
+
+REGLAS DE SINTAXIS:
+- Usa `flowchart TD` para arquitecturas generales.
+- Componentes: `[ ]` para procesos/apps, `[( )]` para DBs, `(( ))` para usuarios/entidades externas.
+- Todos los diagramas deben entregarse en bloques de código markdown para su renderización automática.
+"""
+
+# 6. Crear el agente
 try:
     agente = create_react_agent(
         llm, 
@@ -62,17 +93,17 @@ except TypeError:
         prompt=instrucciones_sistema 
     )
 
-# 6. Configurar el "Hilo" (Thread) de la conversación
-config = {"configurable": {"thread_id": "analista_deportivo_01"}}
+# 7. Configuración
+config = {"configurable": {"thread_id": "threat_modeling_session_01"}}
 
-print("\n--- Agente de Rendimiento Deportivo Iniciado (Escribe 'salir' para terminar) ---")
-print("Consejo: Pásale la ruta de un CSV exportado de Strava/Garmin para analizar tu ruta.")
+print("\n--- Agente Arquitecto de Seguridad (Threat Modeling) Iniciado ---")
+print("Introduce el nombre de una aplicación o describe una arquitectura para comenzar.")
 
-# 7. El Bucle del Chatbot
+# 8. El Bucle del Chatbot
 while True:
     pregunta = input("\nTú: ")
     if pregunta.lower() in ['salir', 'exit', 'quit']:
-        print("Guardando zapatillas y apagando agente...")
+        print("Guardando bicicleta y apagando agente...")
         break
 
     resultado = agente.invoke(
