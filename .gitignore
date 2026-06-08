@@ -1,0 +1,11 @@
+# Entornos virtuales de Python
+entorno_agente/
+venv/
+.env
+
+# Archivos cacheados de Mac y Python
+.DS_Store
+__pycache__/
+
+# No subir tus datos deportivos reales
+*.csv
