@@ -550,9 +550,9 @@ MIT License Summary:
 ## 📞 Contact & Questions
 
 For questions or suggestions:
-- 📧 Email: marc@example.com
+- 📧 Email: TBF
 - 💬 Discussions: Use GitHub Discussions
-- 🐦 Twitter: [@marcgrau](https://twitter.com/marcgrau)
+- 🐦 Twitter: TBD
 
 ---
 
