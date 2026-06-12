@@ -23,13 +23,14 @@ class ApplicationStorage:
         Path(self.storage_dir).mkdir(parents=True, exist_ok=True)
         Path(self.applications_dir).mkdir(parents=True, exist_ok=True)
     
-    def create_application(self, app_name: str, description: str) -> Dict[str, Any]:
+    def create_application(self, app_name: str, description: str, scan_type: str = "auto") -> Dict[str, Any]:
         """Create a new application record."""
         app_id = self._generate_id()
         app_data = {
             "id": app_id,
             "name": app_name,
             "description": description,
+            "scan_type": scan_type,
             "status": "pending",
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
@@ -37,6 +38,8 @@ class ApplicationStorage:
             "mermaid_diagrams": [],
             "threats": [],
             "mitigations": [],
+            "impact_assessment": None,
+            "deep_scan_used": False,
             "otm_report": None
         }
         
@@ -98,7 +101,7 @@ class ApplicationStorage:
         """Get statistics about all applications."""
         applications = self.list_applications()
         
-        statuses = {"pending": 0, "completed": 0, "error": 0}
+        statuses = {"pending": 0, "processing": 0, "completed": 0, "error": 0}
         for app in applications:
             status = app.get('status', 'pending')
             if status in statuses:

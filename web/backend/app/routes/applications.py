@@ -35,7 +35,7 @@ async def get_dashboard_stats():
 async def create_application(req: ApplicationCreate):
     """Create a new application for threat modeling."""
     storage = get_storage()
-    app_data = storage.create_application(req.name, req.description)
+    app_data = storage.create_application(req.name, req.description, req.scan_type)
     return ApplicationResponse.model_validate(app_data)
 
 

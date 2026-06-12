@@ -9,15 +9,19 @@ class ApplicationCreate(BaseModel):
     """Request model for creating a new application."""
     name: str
     description: str
+    scan_type: str = "auto"
 
 
 class AnalysisUpdate(BaseModel):
     """Request model for updating analysis results."""
     status: Optional[str] = None
     analysis: Optional[str] = None
+    scan_type: Optional[str] = None
+    deep_scan_used: Optional[bool] = None
     mermaid_diagrams: Optional[List[str]] = None
     threats: Optional[List[Dict[str, Any]]] = None
     mitigations: Optional[List[Dict[str, Any]]] = None
+    impact_assessment: Optional[str] = None
     otm_report: Optional[Dict[str, Any]] = None
 
 
@@ -26,6 +30,8 @@ class ApplicationResponse(BaseModel):
     id: str
     name: str
     description: str
+    scan_type: str = "auto"
+    deep_scan_used: Optional[bool] = None
     status: str
     created_at: str
     updated_at: str
@@ -33,6 +39,7 @@ class ApplicationResponse(BaseModel):
     mermaid_diagrams: List[str] = []
     threats: List[Dict[str, Any]] = []
     mitigations: List[Dict[str, Any]] = []
+    impact_assessment: Optional[str] = None
     otm_report: Optional[Dict[str, Any]] = None
 
     class Config:

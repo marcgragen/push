@@ -514,6 +514,24 @@
             100% { transform: rotate(360deg); }
         }
 
+        /* Markdown Body Table styles */
+        .markdown-body table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 14px;
+        }
+        .markdown-body th, .markdown-body td {
+            border: 1px solid #e0e0e0;
+            padding: 10px 12px;
+            text-align: left;
+        }
+        .markdown-body th {
+            background-color: #f8f9fa;
+            color: #333;
+            font-weight: 600;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .stats-grid,
@@ -661,8 +679,22 @@
             <div class="detail-header">
                 <h1>{{ currentApplication.name }}</h1>
                 <p>{{ currentApplication.description }}</p>
-                <div class="detail-actions">
+                <div v-if="currentApplication.status === 'completed'" style="margin-bottom: 15px;">
+                    <span style="font-size: 13px; background: #f0f4f8; padding: 4px 8px; border-radius: 4px; color: #4a5568; border: 1px solid #e2e8f0;">
+                        <span v-if="currentApplication.deep_scan_used">🔍 Deep Scan Performed</span>
+                        <span v-else>⚡ Light Scan Performed</span>
+                    </span>
+                </div>
+                <div class="detail-actions" style="align-items: center; gap: 15px;">
                     <span :class="['status-badge', 'status-' + currentApplication.status]">{{ currentApplication.status }}</span>
+                    
+                    <div style="display: flex; align-items: center; gap: 5px;" v-if="currentApplication.status !== 'processing'">
+                        <select v-model="currentApplication.scan_type" @change="updateApplicationScanType" style="padding: 6px; border-radius: 4px; border: 1px solid #ccc; font-size: 13px; background: white;">
+                            <option value="auto">Auto Scan</option>
+                            <option value="light">Force Light</option>
+                            <option value="deep">Force Deep</option>
+                        </select>
+                    </div>
                     <button v-if="currentApplication.status !== 'processing'" class="btn btn-primary btn-small" @click="runAnalysis">
                         {{ currentApplication.status === 'completed' ? 'Re-analyze' : 'Analyze' }}
                     </button>
@@ -684,41 +716,47 @@
                 <div class="tabs">
                     <button @click="activeTab = 'overview'" :class="['tab', { active: activeTab === 'overview' }]">Overview</button>
                     <button @click="activeTab = 'threats'" :class="['tab', { active: activeTab === 'threats' }]">Threats</button>
-                    <button @click="activeTab = 'mitigations'" :class="['tab', { active: activeTab === 'mitigations' }]">Mitigations</button>
-                    <button @click="activeTab = 'diagrams'" :class="['tab', { active: activeTab === 'diagrams' }]" v-if="currentApplication.mermaid_diagrams.length > 0">Diagrams</button>
+                    <button @click="activeTab = 'impact'" :class="['tab', { active: activeTab === 'impact' }]">Impact & MITRE</button>
+                    <button @click="activeTab = 'mitigations'" :class="['tab', { active: activeTab === 'mitigations' }]">Countermeasures</button>
+                    <button @click="activeTab = 'diagrams'" :class="['tab', { active: activeTab === 'diagrams' }]" v-if="currentApplication.mermaid_diagrams.length > 0">Diagram</button>
                 </div>
 
                 <!-- Overview Tab -->
                 <div v-if="activeTab === 'overview'" class="tab-content">
                     <h3>Architecture Analysis</h3>
-                    <div class="markdown-body" style="color: #666; line-height: 1.6; margin-top: 10px;" v-html="renderMarkdown(currentApplication.analysis)"></div>
+                    <div class="markdown-body" style="color: #666; line-height: 1.6; margin-top: 10px;" v-html="renderMarkdown(stripMermaid(currentApplication.analysis))"></div>
                 </div>
 
                 <!-- Threats Tab -->
                 <div v-if="activeTab === 'threats'" class="tab-content">
                     <h3>STRIDE Threats</h3>
-                    <div v-if="currentApplication.threats.length > 0">
-                        <div v-for="(threat, index) in currentApplication.threats" :key="index" class="threat-item">
-                            <h4>Threat {{ index + 1 }}</h4>
-                            <p>{{ threat.description }}</p>
-                        </div>
+                    <div v-if="currentApplication.threats && currentApplication.threats.length > 0">
+                        <div class="markdown-body" v-html="renderMarkdown(currentApplication.threats[0].description)"></div>
                     </div>
                     <div v-else class="empty-state" style="background: transparent; box-shadow: none; padding: 40px 0;">
                         <p>No threats identified yet</p>
                     </div>
                 </div>
 
-                <!-- Mitigations Tab -->
-                <div v-if="activeTab === 'mitigations'" class="tab-content">
-                    <h3>Security Mitigations</h3>
-                    <div v-if="currentApplication.mitigations.length > 0">
-                        <div v-for="(mitigation, index) in currentApplication.mitigations" :key="index" class="mitigation-item">
-                            <h4>Mitigation {{ index + 1 }}</h4>
-                            <p>{{ mitigation.description }}</p>
-                        </div>
+                <!-- Impact Tab -->
+                <div v-if="activeTab === 'impact'" class="tab-content">
+                    <h3>Impact and MITRE ATT&CK Assessment</h3>
+                    <div v-if="currentApplication.impact_assessment">
+                        <div class="markdown-body" v-html="renderMarkdown(currentApplication.impact_assessment)"></div>
                     </div>
                     <div v-else class="empty-state" style="background: transparent; box-shadow: none; padding: 40px 0;">
-                        <p>No mitigations available</p>
+                        <p>No impact assessment available</p>
+                    </div>
+                </div>
+
+                <!-- Mitigations Tab -->
+                <div v-if="activeTab === 'mitigations'" class="tab-content">
+                    <h3>Security Countermeasures</h3>
+                    <div v-if="currentApplication.mitigations && currentApplication.mitigations.length > 0">
+                        <div class="markdown-body" v-html="renderMarkdown(currentApplication.mitigations[0].description)"></div>
+                    </div>
+                    <div v-else class="empty-state" style="background: transparent; box-shadow: none; padding: 40px 0;">
+                        <p>No countermeasures available</p>
                     </div>
                 </div>
 
@@ -757,6 +795,14 @@
                             placeholder="Describe your application architecture, components, data flows, and any infrastructure details..."
                         ></textarea>
                     </div>
+                    <div class="form-group">
+                        <label for="scan-type">Scan Type</label>
+                        <select v-model="newApplication.scan_type" id="scan-type" style="width: 100%; padding: 12px; border: 2px solid #eee; border-radius: 8px; font-size: 14px; font-family: inherit; transition: border-color 0.3s; background: white;">
+                            <option value="auto">Auto (Agent decides based on complexity)</option>
+                            <option value="light">Force Light Scan (Faster)</option>
+                            <option value="deep">Force Deep Scan (More comprehensive)</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" @click="showAddModal = false">Cancel</button>
@@ -786,7 +832,8 @@
 
                 const newApplication = reactive({
                     name: '',
-                    description: ''
+                    description: '',
+                    scan_type: 'auto'
                 });
 
                 const API_BASE = '/api';
@@ -794,6 +841,11 @@
                 const renderMarkdown = (text) => {
                     if (!text) return '';
                     return marked.parse(text);
+                };
+
+                const stripMermaid = (text) => {
+                    if (!text) return '';
+                    return text.replace(/```mermaid[\s\S]*?```/g, '');
                 };
 
                 const formatDate = (dateString) => {
@@ -834,6 +886,7 @@
                         // Reset form
                         newApplication.name = '';
                         newApplication.description = '';
+                        newApplication.scan_type = 'auto';
                         showAddModal.value = false;
 
                         // Reload data
@@ -858,6 +911,22 @@
 
                 const runAnalysis = () => {
                     runAnalysisForApp(currentApplication.value.id);
+                };
+
+                const updateApplicationScanType = async () => {
+                    try {
+                        await fetch(`${API_BASE}/applications/${currentApplication.value.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ scan_type: currentApplication.value.scan_type })
+                        });
+                        const idx = applications.value.findIndex(a => a.id === currentApplication.value.id);
+                        if (idx !== -1) {
+                            applications.value[idx].scan_type = currentApplication.value.scan_type;
+                        }
+                    } catch (error) {
+                        console.error('Error updating scan type:', error);
+                    }
                 };
 
                 const runAnalysisForApp = async (appId) => {
@@ -967,7 +1036,17 @@
                         setTimeout(updateChart, 100);
                     }
                     if (newPage === 'detail') {
-                        setTimeout(() => mermaid.contentLoaded(), 100);
+                        setTimeout(() => {
+                            if (window.mermaid) mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+                        }, 100);
+                    }
+                });
+
+                watch(() => activeTab.value, (newTab) => {
+                    if (newTab === 'diagrams') {
+                        setTimeout(() => {
+                            if (window.mermaid) mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+                        }, 100);
                     }
                 });
 
@@ -994,11 +1073,13 @@
                     formatDate,
                     createApplication,
                     viewApplication,
+                    updateApplicationScanType,
                     runAnalysis,
                     deleteApplication,
                     loadApplications,
                     loadStats,
-                    renderMarkdown
+                    renderMarkdown,
+                    stripMermaid
                 };
             }
         }).mount('#app');

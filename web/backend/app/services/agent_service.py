@@ -109,6 +109,7 @@ def run_threat_analysis(app_id: str):
                 "mermaid_diagrams": analysis_data["diagrams"],
                 "threats": [{"description": t} for t in analysis_data["threats"]],
                 "mitigations": [{"description": m} for m in analysis_data["mitigations"]],
+                "impact_assessment": "Mock Impact and MITRE ATT&CK Assessment",
                 "otm_report": None
             })
             print(f"[ANALYSIS] Complete for {app_id}")
@@ -129,6 +130,7 @@ def run_threat_analysis(app_id: str):
             "mitre_attack_references": [],
             "raw_infra_data": app_data['description'],
             "corporate_policies": Settings.DEFAULT_CORPORATE_POLICIES,
+            "scan_type": app_data.get('scan_type', 'auto'),
             "scan_summary": "",
             "needs_deep_scan": False,
             "deep_scan_results": "",
@@ -156,6 +158,8 @@ def run_threat_analysis(app_id: str):
             "mermaid_diagrams": final_state.get("mermaid_diagrams", []),
             "threats": threats_list,
             "mitigations": mitigations_list,
+            "impact_assessment": final_state.get("impact_assessment", ""),
+            "deep_scan_used": final_state.get("needs_deep_scan", False),
             "otm_report": None
         })
         print(f"[ANALYSIS] Agent analysis complete for {app_id}")

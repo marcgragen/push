@@ -8,6 +8,93 @@ from src.state import AgentState
 from src.prompts import SYSTEM_ARCHITECT_PROMPT
 
 
+MERMAID_REPAIR_PROMPT = """You are a Mermaid.js syntax expert for Mermaid version 11.
+The following Mermaid diagram code has syntax errors and fails to render.
+
+BROKEN DIAGRAM:
+```
+{diagram}
+```
+
+Fix ONLY the syntax errors while preserving the original diagram's intent and structure.
+
+COMMON ISSUES TO FIX:
+- Unbalanced 'subgraph' / 'end' pairs
+- Invalid arrow syntax (use -->, --o, -.->, ---|label|, -->|label|)
+- Node IDs with spaces (must be quoted or use underscores)
+- Missing semicolons or line breaks between statements
+- Invalid characters in labels (escape parentheses inside node labels with quotes)
+- 'flowchart TD' is preferred over 'graph TD'
+- In sequenceDiagram: use ->> not --> for async, and -> for sync
+- Avoid HTML tags inside labels
+
+Return ONLY the fixed Mermaid code, no markdown fences, no explanation."""
+
+
+def _validate_and_fix_mermaid(diagram: str, llm) -> str:
+    """
+    Validate a Mermaid diagram for common syntax issues.
+    If issues are detected, use the LLM to repair the syntax.
+    """
+    lines = diagram.strip().splitlines()
+    if not lines:
+        return diagram
+
+    # Quick syntax checks
+    has_issues = False
+
+    # Check 1: Balanced subgraph/end pairs
+    subgraph_count = sum(1 for l in lines if l.strip().startswith("subgraph"))
+    end_count = sum(1 for l in lines if l.strip() == "end")
+    if subgraph_count != end_count:
+        has_issues = True
+
+    # Check 2: Common broken arrow patterns
+    for line in lines:
+        stripped = line.strip()
+        # Detect malformed arrows like "-- >" or "- ->"
+        if "-- >" in stripped or "- ->" in stripped:
+            has_issues = True
+            break
+        # Detect unquoted labels with special chars in node definitions
+        if "[" in stripped and "]" in stripped:
+            # Check for unescaped parentheses inside brackets
+            bracket_content = stripped[stripped.index("[") + 1:stripped.rindex("]")]
+            if "(" in bracket_content and '"' not in bracket_content:
+                has_issues = True
+                break
+
+    # Check 3: Diagram type declaration
+    first_line = lines[0].strip().lower()
+    valid_starts = ["flowchart", "graph", "sequencediagram", "statediagram", "classDiagram",
+                    "erdiagram", "gantt", "pie", "gitgraph", "mindmap", "timeline",
+                    "statediagram-v2"]
+    if not any(first_line.startswith(s.lower()) for s in valid_starts):
+        has_issues = True
+
+    if not has_issues:
+        return diagram
+
+    # Use LLM to repair
+    print("    [MERMAID] Syntax issues detected, attempting AI repair...")
+    try:
+        repair_prompt = MERMAID_REPAIR_PROMPT.replace("{diagram}", diagram)
+        response = llm.invoke([HumanMessage(content=repair_prompt)])
+        fixed = response.content.strip()
+        # Strip markdown fences if the LLM included them anyway
+        if fixed.startswith("```"):
+            fixed = "\n".join(fixed.split("\n")[1:])
+        if fixed.endswith("```"):
+            fixed = "\n".join(fixed.split("\n")[:-1])
+        if fixed.startswith("mermaid"):
+            fixed = "\n".join(fixed.split("\n")[1:])
+        print("    [MERMAID] Repair successful.")
+        return fixed.strip()
+    except Exception as e:
+        print(f"    [MERMAID] Repair failed: {e}. Using original diagram.")
+        return diagram
+
+
 def system_architect_node(llm, tavily_tool, state: AgentState) -> AgentState:
     """
     System Architect agent analyzes infrastructure and generates architecture diagrams.
@@ -87,7 +174,10 @@ def system_architect_node(llm, tavily_tool, state: AgentState) -> AgentState:
             current_mermaid = []
         elif line.strip() == "```" and in_mermaid_block:
             in_mermaid_block = False
-            mermaid_blocks.append("\n".join(current_mermaid))
+            raw_diagram = "\n".join(current_mermaid)
+            # Validate and fix each diagram before storing
+            fixed_diagram = _validate_and_fix_mermaid(raw_diagram, llm)
+            mermaid_blocks.append(fixed_diagram)
             current_mermaid = []
         elif in_mermaid_block:
             current_mermaid.append(line)
@@ -104,3 +194,4 @@ def system_architect_node(llm, tavily_tool, state: AgentState) -> AgentState:
         "mermaid_diagrams": mermaid_blocks,
         "messages": messages + [AIMessage(content=architecture_output)]
     }
+

@@ -20,6 +20,7 @@ class AgentState(TypedDict):
     threats_stride: str
     impact_assessment: str
     mitigations: str
+    scan_type: str  # 'auto', 'light', 'deep'
     otm_report: str  # Report in Open Threat Model (JSON) format
     status: str  # Draft -> In Review -> Approved
     mermaid_diagrams: Annotated[List[str], operator.add]
