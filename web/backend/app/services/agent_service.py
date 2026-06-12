@@ -142,14 +142,17 @@ def run_threat_analysis(app_id: str):
             "status": "Draft"
         }
         
-        final_state = app_graph.invoke(initial_state)
+        config = {"configurable": {"thread_id": app_id}}
+        final_state = app_graph.invoke(initial_state, config)
         
         threats_list = [{"description": final_state.get("threats_stride", "")}] if final_state.get("threats_stride") else []
         mitigations_list = [{"description": final_state.get("mitigations", "")}] if final_state.get("mitigations") else []
         
+        final_report_message = final_state['messages'][-1].content if final_state.get('messages') else final_state.get("architecture_description", "")
+        
         storage.update_application(app_id, {
             "status": "completed",
-            "analysis": final_state.get("architecture_description", ""),
+            "analysis": final_report_message,
             "mermaid_diagrams": final_state.get("mermaid_diagrams", []),
             "threats": threats_list,
             "mitigations": mitigations_list,
